@@ -1,25 +1,27 @@
-defmodule FlyWeb.AppLive.Show do
+defmodule FlyWeb.AppLive.Allocation do
   use FlyWeb, :live_view
+
   require Logger
 
   alias Fly.Client
   alias FlyWeb.Components.HeaderBreadcrumbs
 
   @impl true
-  def mount(%{"name" => name}, session, socket) do
+  def mount(%{"name" => name, "id" => id}, session, socket) do
     socket =
       assign(socket,
         config: client_config(session),
         state: :loading,
-        app: nil,
         app_name: name,
-        count: 0,
+        allocation_id: id,
+        status: nil,
+        allocation: nil,
         authenticated: true
       )
 
     # Only make the API call if the websocket is setup. Not on initial render.
     if connected?(socket) do
-      # update immediately after mount
+      # Send the signal immediately
       Process.send_after(self(), :update, 0)
       {:ok, socket}
     else
@@ -33,7 +35,7 @@ defmodule FlyWeb.AppLive.Show do
 
   @impl true
   def handle_info(:update, socket) do
-    socket = fetch_app(socket)
+    socket = fetch_allocation(socket)
 
     # Refresh after 3 seconds
     Process.send_after(self(), :update, 3000)
@@ -41,45 +43,37 @@ defmodule FlyWeb.AppLive.Show do
     {:noreply, socket}
   end
 
-  defp fetch_app(socket) do
+  defp fetch_allocation(socket) do
     app_name = socket.assigns.app_name
+    allocation_id = socket.assigns.allocation_id
 
-    case Client.fetch_app(app_name, socket.assigns.config, true) do
-      {:ok, app} ->
-        socket |> assign(:app, app)
+    case Client.fetch_allocation(app_name, allocation_id, socket.assigns.config) do
+      {:ok, status} ->
+        socket |> assign(:status, status) |> assign(:allocation, status["allocation"])
 
       {:error, :unauthorized} ->
         socket |> put_flash(:error, "Not authenticated")
 
       {:error, reason} ->
-        Logger.error("Failed to load app '#{inspect(app_name)}'. Reason: #{inspect(reason)}")
+        Logger.error("Failed to load allocation. Reason: #{inspect(reason)}")
 
         socket |> put_flash(:error, reason)
     end
   end
 
-  @impl true
-  def handle_event("click", _params, socket) do
-    {:noreply, assign(socket, count: socket.assigns.count + 1)}
-  end
-
-  def status_bg_color(app) do
-    case app["status"] do
-      "running" -> "bg-green-100"
-      "dead" -> "bg-red-100"
-      _ -> "bg-yellow-100"
+  def status_bg_color(status) do
+    case status do
+      value when value in ["running", "passing"] -> "bg-green-100"
+      "complete" -> "bg-gray-100"
+      _ -> "bg-red-100"
     end
   end
 
-  def status_text_color(app) do
-    case app["status"] do
-      "running" -> "text-green-800"
-      "dead" -> "text-red-800"
-      _ -> "text-yellow-800"
+  def status_text_color(status) do
+    case status do
+      value when value in ["running", "passing"] -> "text-green-800"
+      "complete" -> "text-gray-800"
+      _ -> "text-red-800"
     end
-  end
-
-  def preview_url(app) do
-    "https://#{app["name"]}.fly.dev"
   end
 end
